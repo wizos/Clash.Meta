@@ -57,6 +57,10 @@ func (u *URLTest) ForceSet(name string) {
 	u.fastSingle.Reset()
 }
 
+func (u *URLTest) ResetFastNode() {
+	u.fastSingle.Reset()
+}
+
 // DialContext implements C.ProxyAdapter
 func (u *URLTest) DialContext(ctx context.Context, metadata *C.Metadata) (c C.Conn, err error) {
 	proxy := u.fast(true)
