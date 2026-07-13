@@ -22,6 +22,7 @@ type GEOIP struct {
 	adapter     string
 	noResolveIP bool
 	isSourceIP  bool
+	invert      bool
 }
 
 var _ C.Rule = (*GEOIP)(nil)
@@ -51,6 +52,9 @@ func (g *GEOIP) Match(metadata *C.Metadata, helper C.RuleMatchHelper) (bool, str
 	}
 
 	if geodata.GeodataMode() {
+		if g.invert {
+			return false, ""
+		}
 		if g.isSourceIP {
 			if slices.Contains(metadata.SrcGeoIP, g.country) {
 				return true, g.adapter
@@ -77,11 +81,11 @@ func (g *GEOIP) Match(metadata *C.Metadata, helper C.RuleMatchHelper) (bool, str
 
 	if g.isSourceIP {
 		if metadata.SrcGeoIP != nil {
-			return slices.Contains(metadata.SrcGeoIP, g.country), g.adapter
+			return g.matchCodes(metadata.SrcGeoIP), g.adapter
 		}
 	} else {
 		if metadata.DstGeoIP != nil {
-			return slices.Contains(metadata.DstGeoIP, g.country), g.adapter
+			return g.matchCodes(metadata.DstGeoIP), g.adapter
 		}
 	}
 	codes := mmdb.IPInstance().LookupCode(ip.AsSlice())
@@ -90,7 +94,7 @@ func (g *GEOIP) Match(metadata *C.Metadata, helper C.RuleMatchHelper) (bool, str
 	} else {
 		metadata.DstGeoIP = codes
 	}
-	if slices.Contains(codes, g.country) {
+	if g.matchCodes(codes) {
 		return true, g.adapter
 	}
 	return false, ""
@@ -107,6 +111,9 @@ func (g *GEOIP) MatchIp(ip netip.Addr) bool {
 	}
 
 	if geodata.GeodataMode() {
+		if g.invert {
+			return false
+		}
 		matcher, err := g.getIPMatcher()
 		if err != nil {
 			return false
@@ -115,7 +122,7 @@ func (g *GEOIP) MatchIp(ip netip.Addr) bool {
 	}
 
 	codes := mmdb.IPInstance().LookupCode(ip.AsSlice())
-	return slices.Contains(codes, g.country)
+	return g.matchCodes(codes)
 }
 
 // MatchIp implements C.IpMatcher
@@ -133,6 +140,9 @@ func (g dnsFallbackFilter) MatchIp(ip netip.Addr) bool {
 	}
 
 	if geodata.GeodataMode() {
+		if g.invert {
+			return false
+		}
 		matcher, err := g.getIPMatcher()
 		if err != nil {
 			return false
@@ -141,7 +151,7 @@ func (g dnsFallbackFilter) MatchIp(ip netip.Addr) bool {
 	}
 
 	codes := mmdb.IPInstance().LookupCode(ip.AsSlice())
-	return !slices.Contains(codes, g.country)
+	return !g.matchCodes(codes)
 }
 
 type dnsFallbackFilter struct {
@@ -166,6 +176,9 @@ func (g *GEOIP) Adapter() string {
 }
 
 func (g *GEOIP) Payload() string {
+	if g.invert {
+		return "!" + g.country
+	}
 	return g.country
 }
 
@@ -203,6 +216,10 @@ func (g *GEOIP) GetRecodeSize() int {
 
 func NewGEOIP(country string, adapter string, isSrc, noResolveIP bool) (*GEOIP, error) {
 	country = strings.ToLower(country)
+	invert := strings.HasPrefix(country, "!")
+	if invert {
+		country = strings.TrimPrefix(country, "!")
+	}
 
 	geoip := &GEOIP{
 		Base:        Base{},
@@ -210,10 +227,18 @@ func NewGEOIP(country string, adapter string, isSrc, noResolveIP bool) (*GEOIP, 
 		adapter:     adapter,
 		noResolveIP: noResolveIP,
 		isSourceIP:  isSrc,
+		invert:      invert,
 	}
 
 	if country == "lan" {
+		if invert {
+			return nil, errors.New("GEOIP,!LAN is unsupported")
+		}
 		return geoip, nil
+	}
+
+	if invert && geodata.GeodataMode() {
+		return nil, errors.New("GEOIP invert match requires MMDB mode")
 	}
 
 	if err := geodata.InitGeoIP(); err != nil {
@@ -230,6 +255,13 @@ func NewGEOIP(country string, adapter string, isSrc, noResolveIP bool) (*GEOIP, 
 	}
 
 	return geoip, nil
+}
+
+func (g *GEOIP) matchCodes(codes []string) bool {
+	if g.invert {
+		return len(codes) > 0 && !slices.Contains(codes, g.country)
+	}
+	return slices.Contains(codes, g.country)
 }
 
 var _ C.Rule = (*GEOIP)(nil)
