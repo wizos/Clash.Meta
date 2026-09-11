@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/dlclark/regexp2"
 
@@ -23,29 +24,31 @@ var (
 )
 
 type GroupCommonOption struct {
-	Name                string   `group:"name"`
-	Type                string   `group:"type"`
-	Proxies             []string `group:"proxies,omitempty"`
-	Use                 []string `group:"use,omitempty"`
-	URL                 string   `group:"url,omitempty"`
-	Interval            int      `group:"interval,omitempty"`
-	TestTimeout         int      `group:"timeout,omitempty"`
-	MaxFailedTimes      int      `group:"max-failed-times,omitempty"`
-	EmptyFallback       string   `group:"empty-fallback,omitempty"`
-	Lazy                bool     `group:"lazy,omitempty"`
-	DisableUDP          bool     `group:"disable-udp,omitempty"`
-	Filter              string   `group:"filter,omitempty"`
-	ExcludeFilter       string   `group:"exclude-filter,omitempty"`
-	ExcludeType         string   `group:"exclude-type,omitempty"`
-	ExpectedStatus      string   `group:"expected-status,omitempty"`
-	IncludeAll          bool     `group:"include-all,omitempty"`
-	IncludeAllProxies   bool     `group:"include-all-proxies,omitempty"`
-	IncludeAllProviders bool     `group:"include-all-providers,omitempty"`
-	Hidden              bool     `group:"hidden,omitempty"`
-	Icon                string   `group:"icon,omitempty"`
+	Name                string        `group:"name"`
+	Type                string        `group:"type"`
+	Proxies             []string      `group:"proxies,omitempty"`
+	Use                 []string      `group:"use,omitempty"`
+	URL                 string        `group:"url,omitempty"`
+	Interval            int           `group:"interval,omitempty"`
+	TestTimeout         int           `group:"timeout,omitempty"`
+	MaxFailedTimes      int           `group:"max-failed-times,omitempty"`
+	EmptyFallback       string        `group:"empty-fallback,omitempty"`
+	Lazy                bool          `group:"lazy,omitempty"`
+	DisableUDP          bool          `group:"disable-udp,omitempty"`
+	Filter              string        `group:"filter,omitempty"`
+	ExcludeFilter       string        `group:"exclude-filter,omitempty"`
+	ExcludeType         string        `group:"exclude-type,omitempty"`
+	ExpectedStatus      string        `group:"expected-status,omitempty"`
+	IncludeAll          bool          `group:"include-all,omitempty"`
+	IncludeAllProxies   bool          `group:"include-all-proxies,omitempty"`
+	IncludeAllProviders bool          `group:"include-all-providers,omitempty"`
+	Hidden              bool          `group:"hidden,omitempty"`
+	Icon                string        `group:"icon,omitempty"`
+	FailoverRace        bool          `group:"failover-race,omitempty"`
+	FailoverRaceDelay   time.Duration `group:"-"`
 }
 
-func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, providersMap map[string]P.ProxyProvider, AllProxies []string, AllProviders []string) (C.ProxyAdapter, error) {
+func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, providersMap map[string]P.ProxyProvider, AllProxies []string, AllProviders []string, failoverRaceDelay ...time.Duration) (C.ProxyAdapter, error) {
 	decoder := structure.NewDecoder(structure.Option{TagName: "group", WeaklyTypedInput: true})
 
 	groupOption := &GroupCommonOption{
@@ -57,6 +60,13 @@ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, provide
 
 	if groupOption.Type == "" || groupOption.Name == "" {
 		return nil, errFormat
+	}
+	groupOption.FailoverRaceDelay = 100 * time.Millisecond
+	if len(failoverRaceDelay) != 0 {
+		groupOption.FailoverRaceDelay = failoverRaceDelay[0]
+		if groupOption.FailoverRaceDelay < 0 {
+			groupOption.FailoverRaceDelay = 0
+		}
 	}
 
 	if _, ok := config["routing-mark"]; ok {

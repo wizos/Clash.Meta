@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/metacubex/mihomo/common/callback"
@@ -30,7 +32,12 @@ type URLTest struct {
 	tolerance      uint16
 	disableUDP     bool
 	fastNode       C.Proxy
+	raceNode       C.Proxy
 	fastSingle     *singledo.Single[C.Proxy]
+	failoverRace   bool
+	failoverDelay  time.Duration
+	selectionMu    sync.Mutex
+	selectionEpoch atomic.Uint64
 }
 
 func (u *URLTest) Now() string {
@@ -53,12 +60,28 @@ func (u *URLTest) Set(name string) error {
 }
 
 func (u *URLTest) ForceSet(name string) {
+	u.selectionEpoch.Add(1)
+	u.selectionMu.Lock()
 	u.selected = name
+	u.raceNode = nil
+	u.selectionMu.Unlock()
 	u.fastSingle.Reset()
 }
 
 // DialContext implements C.ProxyAdapter
 func (u *URLTest) DialContext(ctx context.Context, metadata *C.Metadata) (c C.Conn, err error) {
+	if u.failoverRace && !failoverRaceOwned(ctx) {
+		if epoch, automatic := u.failoverRaceSnapshot(); automatic {
+			primary, challenger := u.failoverRaceCandidates(true, metadata)
+			if challenger != nil {
+				return dialFirstIOFailover(ctx, metadata, primary, challenger, u.failoverDelay, u.dialRaceProxy, func() {
+					u.commitFailoverRace(epoch, challenger)
+				})
+			}
+			return u.dialRaceProxy(ctx, primary, metadata)
+		}
+	}
+
 	proxy := u.fast(true)
 	c, err = proxy.DialContext(ctx, metadata)
 	if err == nil {
@@ -78,6 +101,73 @@ func (u *URLTest) DialContext(ctx context.Context, metadata *C.Metadata) (c C.Co
 	}
 
 	return c, err
+}
+
+func (u *URLTest) dialRaceProxy(ctx context.Context, proxy C.Proxy, metadata *C.Metadata) (c C.Conn, err error) {
+	c, err = proxy.DialContext(ctx, metadata)
+	if err == nil {
+		c.AppendToChains(u)
+	} else {
+		u.onDialFailed(proxy.Type(), err, u.healthCheck)
+	}
+	if N.NeedHandshake(c) {
+		c = callback.NewFirstWriteCallBackConn(c, func(err error) {
+			if err == nil {
+				u.onDialSuccess()
+			} else {
+				u.onDialFailed(proxy.Type(), err, u.healthCheck)
+			}
+		})
+	}
+	return c, err
+}
+
+func (u *URLTest) failoverRaceSnapshot() (uint64, bool) {
+	epoch := u.selectionEpoch.Load()
+	u.selectionMu.Lock()
+	automatic := u.selected == ""
+	u.selectionMu.Unlock()
+	return epoch, automatic
+}
+
+func (u *URLTest) failoverRaceCandidates(touch bool, metadata *C.Metadata) (C.Proxy, C.Proxy) {
+	primary := u.fast(touch)
+	proxies := u.GetProxies(false)
+	primaryIndex := 0
+	for index, proxy := range proxies {
+		if proxy.Name() == primary.Name() {
+			primaryIndex = index
+			break
+		}
+	}
+	primaryLeaf := failoverRaceLeaf(primary, metadata)
+	var challenger C.Proxy
+	var challengerDelay uint16 = ^uint16(0)
+	for offset := 1; offset < len(proxies); offset++ {
+		proxy := proxies[(primaryIndex+offset)%len(proxies)]
+		if !proxy.AliveForTestUrl(u.testUrl) || failoverRaceLeaf(proxy, metadata) == primaryLeaf {
+			continue
+		}
+		delay := proxy.LastDelayForTestUrl(u.testUrl)
+		if challenger == nil || delay < challengerDelay {
+			challenger = proxy
+			challengerDelay = delay
+		}
+	}
+	return primary, challenger
+}
+
+func (u *URLTest) commitFailoverRace(epoch uint64, challenger C.Proxy) {
+	u.selectionMu.Lock()
+	if u.selectionEpoch.Load() != epoch || u.selected != "" {
+		u.selectionMu.Unlock()
+		return
+	}
+	u.fastNode = challenger
+	u.raceNode = challenger
+	u.selectionEpoch.Add(1)
+	u.selectionMu.Unlock()
+	u.fastSingle.Reset()
 }
 
 // ListenPacketContext implements C.ProxyAdapter
@@ -106,6 +196,8 @@ func (u *URLTest) healthCheck() {
 
 func (u *URLTest) fast(touch bool) C.Proxy {
 	elm, _, shared := u.fastSingle.Do(func() (C.Proxy, error) {
+		u.selectionMu.Lock()
+		defer u.selectionMu.Unlock()
 		proxies := u.GetProxies(touch)
 		if u.selected != "" {
 			for _, proxy := range proxies {
@@ -117,6 +209,16 @@ func (u *URLTest) fast(touch bool) C.Proxy {
 					return proxy, nil
 				}
 			}
+		}
+		if u.raceNode != nil {
+			for _, proxy := range proxies {
+				if proxy.Name() == u.raceNode.Name() && proxy.AliveForTestUrl(u.testUrl) {
+					u.raceNode = proxy
+					u.fastNode = proxy
+					return proxy, nil
+				}
+			}
+			u.raceNode = nil
 		}
 
 		fast := proxies[0]
@@ -171,13 +273,16 @@ func (u *URLTest) MarshalJSON() ([]byte, error) {
 	for _, proxy := range u.GetProxies(false) {
 		all = append(all, proxy.Name())
 	}
+	u.selectionMu.Lock()
+	selected := u.selected
+	u.selectionMu.Unlock()
 	return json.Marshal(map[string]any{
 		"type":           u.Type().String(),
 		"now":            u.Now(),
 		"all":            all,
 		"testUrl":        u.testUrl,
 		"expectedStatus": u.expectedStatus,
-		"fixed":          u.selected,
+		"fixed":          selected,
 		"hidden":         u.Hidden(),
 		"icon":           u.Icon(),
 		"emptyFallback":  u.EmptyFallback().Name(),
@@ -228,6 +333,8 @@ func NewURLTest(option *GroupCommonOption, emptyFallback C.Proxy, providers []P.
 		disableUDP:     option.DisableUDP,
 		testUrl:        option.URL,
 		expectedStatus: option.ExpectedStatus,
+		failoverRace:   option.FailoverRace,
+		failoverDelay:  option.FailoverRaceDelay,
 	}
 
 	for _, option := range options {
