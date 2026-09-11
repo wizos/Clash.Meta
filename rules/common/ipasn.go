@@ -1,6 +1,8 @@
 package common
 
 import (
+	"strings"
+
 	"github.com/metacubex/mihomo/component/geodata"
 	"github.com/metacubex/mihomo/component/mmdb"
 	C "github.com/metacubex/mihomo/constant"
@@ -26,6 +28,15 @@ func (a *ASN) Match(metadata *C.Metadata, helper C.RuleMatchHelper) (bool, strin
 	}
 	if !ip.IsValid() {
 		return false, ""
+	}
+
+	cachedASN := metadata.DstIPASN
+	if a.isSourceIP {
+		cachedASN = metadata.SrcIPASN
+	}
+	if cachedASN != "" {
+		asn, _, _ := strings.Cut(cachedASN, " ")
+		return a.asn == asn, a.adapter
 	}
 
 	asn, aso := mmdb.ASNInstance().LookupASN(ip.AsSlice())
