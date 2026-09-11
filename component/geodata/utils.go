@@ -63,7 +63,7 @@ func Verify(name string) error {
 	}
 }
 
-var loadGeoSiteMatcherListSF = singleflight.Group[[]*router.Domain]{StoreResult: true}
+var loadGeoSiteMatcherListSF singleflight.Group[[]*router.Domain]
 var loadGeoSiteMatcherSF = singleflight.Group[router.DomainMatcher]{StoreResult: true}
 
 func LoadGeoSiteMatcher(countryCode string) (router.DomainMatcher, error) {
