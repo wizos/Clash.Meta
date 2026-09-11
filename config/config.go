@@ -33,6 +33,7 @@ import (
 	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/listener"
 	LC "github.com/metacubex/mihomo/listener/config"
+	IN "github.com/metacubex/mihomo/listener/inbound"
 	"github.com/metacubex/mihomo/log"
 	R "github.com/metacubex/mihomo/rules"
 	RB "github.com/metacubex/mihomo/rules/bundle"
@@ -205,9 +206,11 @@ type Config struct {
 	Listeners     map[string]C.InboundListener
 	Providers     map[string]P.ProxyProvider
 	RuleProviders map[string]P.RuleProvider
-	Tunnels       []LC.Tunnel
-	Sniffer       *sniffer.Config
-	TLS           *TLS
+	// RequiredRuleProviders contains the providers consumed by this parsed config.
+	RequiredRuleProviders map[string]struct{} `json:"-" yaml:"-"`
+	Tunnels               []LC.Tunnel
+	Sniffer               *sniffer.Config
+	TLS                   *TLS
 }
 
 type RawCors struct {
@@ -735,11 +738,73 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	config.RequiredRuleProviders = collectRequiredRuleProviders(config)
 
 	elapsedTime := time.Since(startTime) / time.Millisecond                     // duration in ms
 	log.Infoln("Initial configuration complete, total time: %dms", elapsedTime) //Segment finished in xxm
 
 	return config, nil
+}
+
+func collectRequiredRuleProviders(config *Config) map[string]struct{} {
+	required := map[string]struct{}{}
+	addNames := func(names []string) {
+		for _, name := range names {
+			required[name] = struct{}{}
+		}
+	}
+	addProviderNames := func(value any) {
+		if value, ok := value.(interface{ ProviderNames() []string }); ok {
+			addNames(value.ProviderNames())
+		}
+	}
+
+	for _, rule := range config.Rules {
+		addProviderNames(rule)
+	}
+	for _, rules := range config.SubRules {
+		for _, rule := range rules {
+			addProviderNames(rule)
+		}
+	}
+	for _, policy := range config.DNS.NameServerPolicy {
+		addProviderNames(policy.Matcher)
+	}
+	for _, policy := range config.DNS.ProxyServerPolicy {
+		addProviderNames(policy.Matcher)
+	}
+	if skipper := config.DNS.FakeIPSkipper; skipper != nil {
+		for _, rule := range skipper.Rules {
+			addProviderNames(rule)
+		}
+		for _, matcher := range skipper.Host {
+			addProviderNames(matcher)
+		}
+	}
+	if config.Sniffer != nil {
+		for _, matcher := range config.Sniffer.ForceDomain {
+			addProviderNames(matcher)
+		}
+		for _, matcher := range config.Sniffer.SkipSrcAddress {
+			addProviderNames(matcher)
+		}
+		for _, matcher := range config.Sniffer.SkipDstAddress {
+			addProviderNames(matcher)
+		}
+		for _, matcher := range config.Sniffer.SkipDomain {
+			addProviderNames(matcher)
+		}
+	}
+	addNames(config.General.Tun.RouteAddressSet)
+	addNames(config.General.Tun.RouteExcludeAddressSet)
+	for _, inboundListener := range config.Listeners {
+		if option, ok := inboundListener.Config().(*IN.TunOption); ok {
+			addNames(option.RouteAddressSet)
+			addNames(option.RouteExcludeAddressSet)
+		}
+	}
+
+	return required
 }
 
 //go:linkname temporaryUpdateGeneral
