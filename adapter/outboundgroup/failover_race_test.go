@@ -25,6 +25,8 @@ type failoverRaceTestProxy struct {
 	dialCalls atomic.Int32
 }
 
+func (p *failoverRaceTestProxy) Adapter() C.ProxyAdapter { return nil }
+
 func (p *failoverRaceTestProxy) Name() string        { return p.name }
 func (p *failoverRaceTestProxy) Type() C.AdapterType { return C.Direct }
 func (p *failoverRaceTestProxy) Addr() string        { return p.name }
@@ -211,7 +213,10 @@ func TestFailoverRaceDisabledUsesOriginalSingleDial(t *testing.T) {
 		return newFailoverRaceTestConn(), nil
 	}}
 	provider := &failoverRaceTestProvider{proxies: []C.Proxy{primary, challenger}}
-	group := NewFallback(&GroupCommonOption{Name: "group", URL: "test", FailoverRace: false}, primary, []P.ProxyProvider{provider})
+	group, err := NewFallback(GroupCommonOption{Name: "group", URL: "test", FailoverRace: false}, FallbackOption{}, primary, []P.ProxyProvider{provider})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	conn, err := group.DialContext(context.Background(), failoverRaceTestMetadata(1))
 	if err != nil {
@@ -236,7 +241,10 @@ func TestFailoverRaceDisabledPreservesFallbackInvalidFixedOrder(t *testing.T) {
 	fixed := &failoverRaceTestProxy{name: "fixed", alive: false}
 	third := &failoverRaceTestProxy{name: "third", alive: true}
 	provider := &failoverRaceTestProvider{proxies: []C.Proxy{first, fixed, third}}
-	group := NewFallback(&GroupCommonOption{Name: "group", URL: "test", FailoverRace: false}, first, []P.ProxyProvider{provider})
+	group, err := NewFallback(GroupCommonOption{Name: "group", URL: "test", FailoverRace: false}, FallbackOption{}, first, []P.ProxyProvider{provider})
+	if err != nil {
+		t.Fatal(err)
+	}
 	group.ForceSet(fixed.Name())
 
 	if now := group.Now(); now != third.Name() {
@@ -612,7 +620,10 @@ func TestFailoverRaceManualEpochPreventsTakeover(t *testing.T) {
 		return challengerConn, nil
 	}}
 	provider := &failoverRaceTestProvider{proxies: []C.Proxy{primary, challenger}}
-	group := NewFallback(&GroupCommonOption{Name: "group", URL: "test", FailoverRace: true, FailoverRaceDelay: time.Millisecond}, primary, []P.ProxyProvider{provider})
+	group, err := NewFallback(GroupCommonOption{Name: "group", URL: "test", FailoverRace: true, FailoverRaceDelay: time.Millisecond}, FallbackOption{}, primary, []P.ProxyProvider{provider})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	conn, err := group.DialContext(context.Background(), failoverRaceTestMetadata(6))
 	if err != nil {
@@ -646,10 +657,14 @@ func TestFailoverRaceTakeoverRequiresReadForAutomaticGroups(t *testing.T) {
 			provider := &failoverRaceTestProvider{proxies: []C.Proxy{primary, challenger}}
 			option := &GroupCommonOption{Name: "group-" + groupType, URL: "test", FailoverRace: true, FailoverRaceDelay: time.Millisecond}
 			var group ProxyGroup
+			var err error
 			if groupType == "fallback" {
-				group = NewFallback(option, primary, []P.ProxyProvider{provider})
+				group, err = NewFallback(*option, FallbackOption{}, primary, []P.ProxyProvider{provider})
 			} else {
-				group = NewURLTest(option, primary, []P.ProxyProvider{provider})
+				group, err = NewURLTest(*option, URLTestOption{}, primary, []P.ProxyProvider{provider})
+			}
+			if err != nil {
+				t.Fatal(err)
 			}
 
 			conn, err := group.DialContext(context.Background(), failoverRaceTestMetadata(7))

@@ -48,13 +48,13 @@ type GroupCommonOption struct {
 	FailoverRaceDelay   time.Duration `group:"-"`
 }
 
-func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, providersMap map[string]P.ProxyProvider, AllProxies []string, AllProviders []string, failoverRaceDelay ...time.Duration) (C.ProxyAdapter, error) {
+func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, providersMap map[string]P.ProxyProvider, AllProxies []string, AllProviders []string, failoverRaceDelay ...time.Duration) (ProxyGroup, error) {
 	decoder := structure.NewDecoder(structure.Option{TagName: "group", WeaklyTypedInput: true})
 
-	groupOption := &GroupCommonOption{
+	groupOption := GroupCommonOption{
 		Lazy: true,
 	}
-	if err := decoder.Decode(config, groupOption); err != nil {
+	if err := decoder.Decode(config, &groupOption); err != nil {
 		return nil, errFormat
 	}
 
@@ -86,6 +86,9 @@ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, provide
 	}
 	emptyFallback, ok := proxyMap[groupOption.EmptyFallback]
 	if !ok {
+		return nil, fmt.Errorf("%s: empty fallback proxy '%s' not found", groupName, groupOption.EmptyFallback)
+	}
+	if _, ok := emptyFallback.Adapter().(ProxyGroup); ok { // strictly forbidden to fill in a proxy group for empty-fallback
 		return nil, fmt.Errorf("%s: empty fallback proxy '%s' not found", groupName, groupOption.EmptyFallback)
 	}
 
@@ -191,25 +194,40 @@ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, provide
 		providersMap[groupName] = pd
 	}
 
-	var group C.ProxyAdapter
 	switch groupOption.Type {
 	case "url-test":
-		opts := parseURLTestOption(config)
-		group = NewURLTest(groupOption, emptyFallback, providers, opts...)
+		opt := URLTestOption{}
+		err = decoder.Decode(config, &opt)
+		if err != nil {
+			return nil, err
+		}
+		return NewURLTest(groupOption, opt, emptyFallback, providers)
 	case "select":
-		group = NewSelector(groupOption, emptyFallback, providers)
+		opt := SelectorOption{}
+		err = decoder.Decode(config, &opt)
+		if err != nil {
+			return nil, err
+		}
+		return NewSelector(groupOption, opt, emptyFallback, providers)
 	case "fallback":
-		group = NewFallback(groupOption, emptyFallback, providers)
+		opt := FallbackOption{}
+		err = decoder.Decode(config, &opt)
+		if err != nil {
+			return nil, err
+		}
+		return NewFallback(groupOption, opt, emptyFallback, providers)
 	case "load-balance":
-		strategy := parseStrategy(config)
-		return NewLoadBalance(groupOption, emptyFallback, providers, strategy)
+		opt := LoadBalanceOption{}
+		err = decoder.Decode(config, &opt)
+		if err != nil {
+			return nil, err
+		}
+		return NewLoadBalance(groupOption, opt, emptyFallback, providers)
 	case "relay":
 		return nil, fmt.Errorf("%w: The group [%s] with relay type was removed, please using dialer-proxy instead", errType, groupName)
 	default:
 		return nil, fmt.Errorf("%w: %s", errType, groupOption.Type)
 	}
-
-	return group, nil
 }
 
 func getProxies(mapping map[string]C.Proxy, list []string) ([]C.Proxy, error) {
