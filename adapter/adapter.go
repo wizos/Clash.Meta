@@ -278,8 +278,19 @@ func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.In
 	}
 
 	satisfied = resp != nil && (expectedStatus == nil || expectedStatus.Check(uint16(resp.StatusCode)))
-	t = uint16(time.Since(start) / time.Millisecond)
+	t = delayMilliseconds(time.Since(start))
 	return
+}
+
+func delayMilliseconds(elapsed time.Duration) uint16 {
+	const maxDelay = time.Duration(^uint16(0)) * time.Millisecond
+	if elapsed >= maxDelay {
+		return ^uint16(0)
+	}
+	if elapsed < time.Millisecond {
+		return 1
+	}
+	return uint16(elapsed / time.Millisecond)
 }
 
 func NewProxy(adapter C.ProxyAdapter) *Proxy {
