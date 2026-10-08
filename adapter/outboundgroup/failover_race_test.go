@@ -768,3 +768,70 @@ func TestFailoverRaceAggregatesDialFailures(t *testing.T) {
 
 var _ C.Conn = (*failoverRaceTestConn)(nil)
 var _ io.Reader = (*failoverRaceTestConn)(nil)
+
+func TestFailoverRaceWriteThenReadConfirmsChallenger(t *testing.T) {
+	resetFailoverRaceTestState(t)
+	conn := newFailoverRaceTestConn()
+	primary := &failoverRaceTestProxy{name: "review-primary", alive: true, dial: func(context.Context) (C.Conn, error) { return nil, errors.New("primary failed") }}
+	challenger := &failoverRaceTestProxy{name: "review-challenger", alive: true, dial: func(context.Context) (C.Conn, error) { return conn, nil }}
+	var confirmed atomic.Int32
+	raced, err := dialFirstIOFailover(context.Background(), failoverRaceTestMetadata(10443), primary, challenger, time.Second, failoverRaceTestDial, func() { confirmed.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raced.Close()
+	if n, err := raced.Write([]byte("request")); err != nil || n != 7 {
+		t.Fatalf("write: %d %v", n, err)
+	}
+	conn.readResults <- failoverRaceTestRead{data: []byte("response")}
+	out := make([]byte, 8)
+	if n, err := raced.Read(out); err != nil || n != 8 {
+		t.Fatalf("read: %d %v", n, err)
+	}
+	if got := confirmed.Load(); got != 1 {
+		t.Fatalf("expected one confirmation, got %d", got)
+	}
+	conn.readResults <- failoverRaceTestRead{data: []byte("again")}
+	buffer := buf.NewSize(16)
+	defer buffer.Release()
+	if err := raced.ReadBuffer(buffer); err != nil {
+		t.Fatal(err)
+	}
+	if got := confirmed.Load(); got != 1 {
+		t.Fatalf("duplicate confirmation: %d", got)
+	}
+}
+
+func TestFailoverRaceWriteThenReadBufferConfirmsChallenger(t *testing.T) {
+	resetFailoverRaceTestState(t)
+	conn := newFailoverRaceTestConn()
+	primary := &failoverRaceTestProxy{name: "review-primary", alive: true, dial: func(context.Context) (C.Conn, error) { return nil, errors.New("primary failed") }}
+	challenger := &failoverRaceTestProxy{name: "review-challenger", alive: true, dial: func(context.Context) (C.Conn, error) { return conn, nil }}
+	var confirmed atomic.Int32
+	raced, err := dialFirstIOFailover(context.Background(), failoverRaceTestMetadata(10444), primary, challenger, time.Second, failoverRaceTestDial, func() { confirmed.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raced.Close()
+	if n, err := raced.Write([]byte("request")); err != nil || n != 7 {
+		t.Fatalf("write: %d %v", n, err)
+	}
+	conn.readResults <- failoverRaceTestRead{data: []byte("response")}
+	out := buf.NewSize(16)
+	defer out.Release()
+	if err := raced.ReadBuffer(out); err != nil || out.Len() != 8 {
+		t.Fatalf("read: %d %v", out.Len(), err)
+	}
+	if got := confirmed.Load(); got != 1 {
+		t.Fatalf("expected one confirmation, got %d", got)
+	}
+	conn.readResults <- failoverRaceTestRead{data: []byte("again")}
+	buffer := buf.NewSize(16)
+	defer buffer.Release()
+	if err := raced.ReadBuffer(buffer); err != nil {
+		t.Fatal(err)
+	}
+	if got := confirmed.Load(); got != 1 {
+		t.Fatalf("duplicate confirmation: %d", got)
+	}
+}

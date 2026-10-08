@@ -294,12 +294,20 @@ func (c *firstIOFailoverConn) Read(p []byte) (int, error) {
 		return 0, nil
 	}
 	if conn := c.winnerConn(); conn != nil {
-		return conn.Read(p)
+		n, err := conn.Read(p)
+		if n > 0 {
+			c.confirmWinner()
+		}
+		return n, err
 	}
 	c.readMu.Lock()
 	defer c.readMu.Unlock()
 	if conn := c.winnerConn(); conn != nil {
-		return conn.Read(p)
+		n, err := conn.Read(p)
+		if n > 0 {
+			c.confirmWinner()
+		}
+		return n, err
 	}
 
 	results := make(chan failoverRaceReadResult, 2)
@@ -379,12 +387,7 @@ func (c *firstIOFailoverConn) selectReadWinner(side failoverRaceSide) bool {
 		if newWinner {
 			c.winner = side
 		}
-		confirm := side == failoverRaceChallenger && !c.confirmed
-		if confirm {
-			c.confirmed = true
-		}
 		loser := c.otherPathLocked(side).conn
-		onConfirmed := c.onConfirmed
 		c.mu.Unlock()
 
 		if newWinner {
@@ -395,10 +398,22 @@ func (c *firstIOFailoverConn) selectReadWinner(side failoverRaceSide) bool {
 			c.releaseExtra()
 			c.signal()
 		}
-		if confirm && onConfirmed != nil {
-			onConfirmed()
-		}
+		c.confirmWinner()
 		return true
+	}
+}
+
+// Only downstream bytes confirm a committed path; writes must never promote it.
+func (c *firstIOFailoverConn) confirmWinner() {
+	c.mu.Lock()
+	confirm := c.winner == failoverRaceChallenger && !c.confirmed
+	if confirm {
+		c.confirmed = true
+	}
+	callback := c.onConfirmed
+	c.mu.Unlock()
+	if confirm && callback != nil {
+		callback()
 	}
 }
 
@@ -520,7 +535,12 @@ func (c *firstIOFailoverConn) failPath(side failoverRaceSide, err error) {
 
 func (c *firstIOFailoverConn) ReadBuffer(buffer *buf.Buffer) error {
 	if conn := c.winnerConn(); conn != nil {
-		return conn.ReadBuffer(buffer)
+		before := buffer.Len()
+		err := conn.ReadBuffer(buffer)
+		if buffer.Len() > before {
+			c.confirmWinner()
+		}
+		return err
 	}
 	_, err := buffer.ReadOnceFrom(c)
 	return err
