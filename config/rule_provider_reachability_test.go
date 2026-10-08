@@ -6,6 +6,7 @@ import (
 
 	"github.com/metacubex/mihomo/config"
 	_ "github.com/metacubex/mihomo/hub/executor"
+	"github.com/metacubex/mihomo/tunnel"
 )
 
 func TestRequiredRuleProvidersIncludesEveryConsumerRoot(t *testing.T) {
@@ -86,15 +87,30 @@ func TestRequiredRuleProvidersIncludesFakeIPDomainMatcher(t *testing.T) {
 	parsed, err := config.Parse([]byte(`
 rule-providers:
   fake-domain-root: {type: inline, behavior: domain, payload: [fake.example]}
+  unused: {type: inline, behavior: domain, payload: [unused.example]}
 dns:
   enhanced-mode: fake-ip
-  fake-ip-filter: [rule-set:fake-domain-root]
+  fake-ip-filter: [.ordinary.example, rule-set:fake-domain-root]
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := parsed.RequiredRuleProviders["fake-domain-root"]; !ok {
 		t.Error("fake-ip domain matcher provider was not marked required")
+	}
+	if _, ok := parsed.RequiredRuleProviders["unused"]; ok {
+		t.Error("unused provider was marked required")
+	}
+	if err := parsed.RuleProviders["fake-domain-root"].Initial(); err != nil {
+		t.Fatal(err)
+	}
+	previousProviders, previousRules := tunnel.RuleProvidersSnapshot(), tunnel.Rules()
+	tunnel.UpdateRules(parsed.Rules, parsed.SubRules, parsed.RuleProviders)
+	t.Cleanup(func() { tunnel.UpdateRules(previousRules, nil, previousProviders) })
+	for _, domain := range []string{"one.ordinary.example", "fake.example"} {
+		if !parsed.DNS.FakeIPSkipper.ShouldSkipped(domain) {
+			t.Errorf("fake-ip filter lost domain %q after combining a DomainSet and a provider", domain)
+		}
 	}
 }
 
