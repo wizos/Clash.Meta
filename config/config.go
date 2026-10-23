@@ -61,7 +61,6 @@ type General struct {
 	GeodataLoader     string                  `json:"geodata-loader"`
 	GeositeMatcher    string                  `json:"geosite-matcher"`
 	TCPConcurrent     bool                    `json:"tcp-concurrent"`
-	FailoverRaceDelay int                     `json:"-"`
 	FindProcessMode   process.FindProcessMode `json:"find-process-mode"`
 	Sniffing          bool                    `json:"sniffing"`
 	GlobalUA          string                  `json:"global-ua"`
@@ -451,7 +450,6 @@ type RawConfig struct {
 	KeepAliveIdle                 int                     `yaml:"keep-alive-idle" json:"keep-alive-idle"`
 	KeepAliveInterval             int                     `yaml:"keep-alive-interval" json:"keep-alive-interval"`
 	DisableKeepAlive              bool                    `yaml:"disable-keep-alive" json:"disable-keep-alive"`
-	FailoverRaceDelay             int                     `yaml:"failover-race-delay" json:"failover-race-delay"`
 
 	ProxyProvider map[string]map[string]any `yaml:"proxy-providers" json:"proxy-providers"`
 	RuleProvider  map[string]map[string]any `yaml:"rule-providers" json:"rule-providers"`
@@ -504,7 +502,6 @@ func DefaultRawConfig() *RawConfig {
 		Proxy:             []map[string]any{},
 		ProxyGroup:        []map[string]any{},
 		TCPConcurrent:     false,
-		FailoverRaceDelay: 100,
 		FindProcessMode:   process.FindProcessStrict,
 		GlobalUA:          "clash.meta/" + C.Version,
 		ETagSupport:       true,
@@ -864,7 +861,6 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 		GeodataLoader:     cfg.GeodataLoader,
 		GeositeMatcher:    cfg.GeositeMatcher,
 		TCPConcurrent:     cfg.TCPConcurrent,
-		FailoverRaceDelay: cfg.FailoverRaceDelay,
 		FindProcessMode:   cfg.FindProcessMode,
 		GlobalUA:          cfg.GlobalUA,
 		ETagSupport:       cfg.ETagSupport,
@@ -1019,7 +1015,7 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 
 	// parse proxy group
 	for idx, mapping := range groupsConfig {
-		group, err := outboundgroup.ParseProxyGroup(mapping, proxies, providersMap, AllProxies, AllProviders, time.Duration(cfg.FailoverRaceDelay)*time.Millisecond)
+		group, err := outboundgroup.ParseProxyGroup(mapping, proxies, providersMap, AllProxies, AllProviders)
 		if err != nil {
 			return nil, nil, fmt.Errorf("proxy group[%d]: %w", idx, err)
 		}
