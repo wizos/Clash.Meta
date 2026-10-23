@@ -9,13 +9,11 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/common/utils"
-	"github.com/metacubex/mihomo/component/ca"
 	mihomoHttp "github.com/metacubex/mihomo/component/http"
 	"github.com/metacubex/mihomo/component/profile/cachefile"
 	P "github.com/metacubex/mihomo/constant/provider"
 
 	"github.com/metacubex/http"
-	"github.com/metacubex/tls"
 )
 
 const (
@@ -138,7 +136,7 @@ func (h *HTTPVehicle) Read(ctx context.Context, oldHash utils.HashType) (buf []b
 			setIfNoneMatch = true
 		}
 	}
-	resp, err := mihomoHttp.HttpRequest(ctx, h.url, http.MethodGet, header, nil, mihomoHttp.WithSpecialProxy(h.proxy), mihomoHttp.WithCAOption(ca.Option{TLSConfig: &tls.Config{InsecureSkipVerify: true}}))
+	resp, err := mihomoHttp.HttpRequest(ctx, h.url, http.MethodGet, header, nil, mihomoHttp.WithSpecialProxy(h.proxy))
 	if err != nil {
 		return
 	}

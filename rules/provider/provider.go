@@ -7,7 +7,6 @@ import (
 	"io"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/metacubex/mihomo/common/pool"
@@ -88,9 +87,7 @@ func (bp *baseProvider) Strategy() any {
 type ruleSetProvider struct {
 	baseProvider
 	*resource.Fetcher[ruleStrategy]
-	format      P.RuleFormat
-	initialOnce sync.Once
-	initialErr  error
+	format P.RuleFormat
 }
 
 type RuleSetProvider struct {
@@ -98,10 +95,8 @@ type RuleSetProvider struct {
 }
 
 func (rp *ruleSetProvider) Initial() error {
-	rp.initialOnce.Do(func() {
-		_, rp.initialErr = rp.Fetcher.Initial()
-	})
-	return rp.initialErr
+	_, err := rp.Fetcher.Initial()
+	return err
 }
 
 func (rp *ruleSetProvider) Update() error {

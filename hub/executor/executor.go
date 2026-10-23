@@ -104,7 +104,7 @@ func ApplyConfig(cfg *config.Config, force bool) {
 	updateGeneral(cfg.General, true)
 	updateDNS(cfg.DNS, cfg.General.IPv6)
 	updateNTP(cfg.NTP) // initialize NTP after DNS because an NTP server may be a hostname.
-	//updateListeners(cfg.General, cfg.Listeners, force) // FlClash 作为库使用时不需要 listener（由 Flutter 侧管理）；仅测试本地编译 mihomo 时取消注释
+	//updateListeners(cfg.General, cfg.Listeners, force)
 	//updateTun(cfg.General) // tun should not care "force"
 	updateIPTables(cfg)
 	updateTunnels(cfg.Tunnels)
@@ -112,9 +112,9 @@ func ApplyConfig(cfg *config.Config, force bool) {
 	tunnel.OnInnerLoading()
 
 	initInnerTcp()
-	loadProvider(cfg.Providers, nil)
+	loadProvider(cfg.Providers)
 	updateProfile(cfg)
-	loadProvider(cfg.RuleProviders, cfg.RequiredRuleProviders)
+	loadProvider(cfg.RuleProviders)
 	runtime.GC()
 	tunnel.OnRunning()
 	updateUpdater(cfg)
@@ -315,7 +315,7 @@ func updateRules(rules []C.Rule, subRules map[string][]C.Rule, ruleProviders map
 	tunnel.UpdateRules(rules, subRules, ruleProviders)
 }
 
-func loadProvider[T P.Provider](providers map[string]T, required map[string]struct{}) {
+func loadProvider[T P.Provider](providers map[string]T) {
 	load := func(pv T) {
 		name := pv.Name()
 		if pv.VehicleType() == P.Compatible {
@@ -344,12 +344,7 @@ func loadProvider[T P.Provider](providers map[string]T, required map[string]stru
 
 	wg := sync.WaitGroup{}
 	ch := make(chan struct{}, concurrentCount)
-	for name, pv := range providers {
-		if required != nil && pv.VehicleType() != P.Inline {
-			if _, ok := required[name]; !ok {
-				continue
-			}
-		}
+	for _, pv := range providers {
 		pv := pv
 		wg.Add(1)
 		ch <- struct{}{}

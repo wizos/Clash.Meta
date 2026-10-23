@@ -327,25 +327,6 @@ func pointerOrDefaultTuicServer(p *tuicServerSchema, def LC.TuicServer) LC.TuicS
 	return def
 }
 
-func initializeTunRuleProviders(tunConfig LC.Tun) {
-	required := make(map[string]struct{}, len(tunConfig.RouteAddressSet)+len(tunConfig.RouteExcludeAddressSet))
-	for _, name := range tunConfig.RouteAddressSet {
-		required[name] = struct{}{}
-	}
-	for _, name := range tunConfig.RouteExcludeAddressSet {
-		required[name] = struct{}{}
-	}
-	for name := range required {
-		provider, ok := tunnel.RuleProviders()[name]
-		if !ok {
-			continue
-		}
-		if err := provider.Initial(); err != nil {
-			log.Warnln("initial rule provider %s error: %v", name, err)
-		}
-	}
-}
-
 func patchConfigs(w http.ResponseWriter, r *http.Request) {
 	general := &configSchema{}
 	if err := render.DecodeJSON(r.Body, &general); err != nil {
@@ -393,11 +374,7 @@ func patchConfigs(w http.ResponseWriter, r *http.Request) {
 	listener.ReCreateRedir(pointerOrDefault(general.RedirPort, ports.RedirPort), tunnel.Tunnel)
 	listener.ReCreateTProxy(pointerOrDefault(general.TProxyPort, ports.TProxyPort), tunnel.Tunnel)
 	listener.ReCreateMixed(pointerOrDefault(general.MixedPort, ports.MixedPort), tunnel.Tunnel)
-	tunConfig := pointerOrDefaultTun(general.Tun, listener.LastTunConf)
-	if general.Tun != nil {
-		initializeTunRuleProviders(tunConfig)
-	}
-	listener.ReCreateTun(tunConfig, tunnel.Tunnel)
+	listener.ReCreateTun(pointerOrDefaultTun(general.Tun, listener.LastTunConf), tunnel.Tunnel)
 	listener.ReCreateShadowSocks(pointerOrDefault(general.ShadowSocksConfig, ports.ShadowSocksConfig), tunnel.Tunnel)
 	listener.ReCreateVmess(pointerOrDefault(general.VmessConfig, ports.VmessConfig), tunnel.Tunnel)
 	listener.ReCreateTuic(pointerOrDefaultTuicServer(general.TuicServer, listener.LastTuicConf), tunnel.Tunnel)
